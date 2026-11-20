@@ -30,7 +30,7 @@ class AccessLogTest {
             .status(200)
             .bytesSent(1234)
             .referer(null)
-            .userAgent("Mozilla/5.0 \u001B[31mあ")
+            .userAgent("Mozilla/5.0 \u001B[31m\u3042")
             .elapsed(Duration.ofMillis(15))
             .requestId("req-1")
             .build();
@@ -82,7 +82,7 @@ class AccessLogTest {
         assertEquals(200L, m.get("http.response.status_code"));
         assertEquals(1234L, m.get("http.response.body.bytes"));
         assertEquals(15_000_000L, m.get("event.duration"));
-        assertEquals("Mozilla/5.0 \u001B[31mあ", m.get("user_agent.original"));
+        assertEquals("Mozilla/5.0 \u001B[31m\u3042", m.get("user_agent.original"));
         assertEquals(null, m.get("http.request.referrer"));
     }
 

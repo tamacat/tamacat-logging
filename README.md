@@ -1,20 +1,22 @@
 # tamacat-logging
 
-Java 25 向けの、セキュリティ最優先・依存最小のロギング実装です。
-コンテナ上の Web サーバーを想定し、**標準出力のみ**に出力します。
+English | [日本語](README-ja.md)
 
-- SLF4J 2.x プロバイダ / `java.lang.System.Logger` バックエンド
-- テキスト形式（限定パターン）と ECS 互換 JSON Lines
-- アクセスログ API（Common / Combined / ECS JSON）
-- jar は1つだけ。ランタイム依存は **0**（`slf4j-api` は optional。SLF4J を使うアプリだけが持っていれば動く）
-- Lookup・式評価・XML 設定・JNDI・ネットワーク/ファイル出力・シリアライズ・プラグイン機構を**持ちません**
-- 改行・制御文字・ANSI エスケープ・双方向制御文字は必ずエスケープされます（ログインジェクション対策）
+A security-first, minimal logging implementation for Java 25.
+Designed for web servers running in containers, it writes to **standard output only**.
 
-設計の詳細は [docs/DESIGN.md](docs/DESIGN.md) を参照してください。
+- SLF4J 2.x provider and `java.lang.System.Logger` backend
+- Plain text (restricted pattern) and ECS-compatible JSON Lines
+- Access log API (Common / Combined / ECS JSON)
+- A single jar with **zero** runtime dependencies (`slf4j-api` is optional; only applications that use SLF4J need it)
+- **No** lookups, expression evaluation, XML configuration, JNDI, network/file output, serialization or plugin mechanism
+- Line breaks, control characters, ANSI escapes and bidirectional controls are always escaped (log injection protection)
 
-## 使い方
+See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 
-tamacat の Maven リポジトリ（tamacat-httpd と同じ）で公開します（1.0.0 は未リリース）。Maven Central には公開しません。
+## Usage
+
+Published to the tamacat Maven repository (the same one as tamacat-httpd); 1.0.0 is not released yet. It is not published to Maven Central.
 
 ```xml
 <repositories>
@@ -33,32 +35,32 @@ tamacat の Maven リポジトリ（tamacat-httpd と同じ）で公開します
 </dependencies>
 ```
 
-SLF4J でも System.Logger でも、依存の記述はこの1つだけです。
+This single dependency is all you need, whether you use SLF4J or System.Logger.
 
-### SLF4J で使う
+### With SLF4J
 
-アプリ側に `slf4j-api`（2.x）があれば、自動的にプロバイダとして登録されます。
+If the application has `slf4j-api` (2.x), tamacat-logging is registered as its provider automatically.
 
 ```java
 Logger log = LoggerFactory.getLogger(MyServer.class);
 MDC.put("reqId", requestId);
 log.info("request {} completed", uri);
 log.atWarn().addKeyValue("status", 503).log("upstream unavailable");
-MDC.clear(); // リクエスト終了時に必ずクリア
+MDC.clear(); // always clear at the end of a request
 ```
 
-### System.Logger で使う（依存ゼロ）
+### With System.Logger (no dependencies)
 
-`slf4j-api` は不要です。
+`slf4j-api` is not needed.
 
 ```java
 System.Logger log = System.getLogger("org.example.App");
 log.log(System.Logger.Level.INFO, "user {0} logged in", user);
 ```
 
-`{0}` は単純な位置置換です（`MessageFormat` のサブフォーマットは解釈しません）。
+`{0}` is a plain positional substitution (`MessageFormat` sub-formats are not interpreted).
 
-### アクセスログ
+### Access log
 
 ```java
 AccessLogger.get().log(AccessLogEntry.builder()
@@ -70,12 +72,12 @@ AccessLogger.get().log(AccessLogEntry.builder()
         .build());
 ```
 
-## 設定
+## Configuration
 
-classpath の `tamacat-logging.properties`（またはシステムプロパティ `tamacat.logging.config` で指定したファイル）。
-環境変数 → システムプロパティ `tamacat.logging.<key>` の順に上書きされます。値の `${...}` 展開は行いません。
+`tamacat-logging.properties` on the classpath, or the file named by the system property `tamacat.logging.config`.
+Environment variables, then system properties `tamacat.logging.<key>`, override it in that order. `${...}` in values is never expanded.
 
-（`.properties` は行末コメントを書けないため、コメントは独立した行に書いてください）
+(`.properties` files do not support trailing comments; put comments on their own lines.)
 
 ```properties
 # text | json
@@ -83,7 +85,7 @@ format=json
 level.root=INFO
 level.org.tamacat.httpd=DEBUG
 
-# text 形式のみ。使えるトークン: %d %level %thread %logger{n} %msg %labels %labels{key} %ex %ex{oneline} %n %%
+# text format only. Tokens: %d %level %thread %logger{n} %msg %labels %labels{key} %ex %ex{oneline} %n %%
 pattern=%d %level [%thread] %logger{36} - %msg%labels%n%ex
 
 ecs.service.name=myapp
@@ -91,10 +93,10 @@ ecs.service.version=1.0.0
 ecs.service.environment=production
 
 accesslog.enabled=true
-# common | combined | json（既定: format に連動）
+# common | combined | json (default: follows format)
 accesslog.format=json
 
-# 値を *** に置換（大文字小文字無視の完全一致）。指定すると既定リストを置き換える
+# Values are replaced with *** (case-insensitive exact match). Setting this replaces the default list.
 mask.keys=password,token,authorization,cookie
 json.asciiOnly=false
 
@@ -108,7 +110,7 @@ limit.access.userAgent.maxLength=512
 limit.access.referer.maxLength=2048
 ```
 
-| 環境変数 | 設定キー |
+| Environment variable | Key |
 |---|---|
 | `TAMACAT_LOG_FORMAT` | `format` |
 | `TAMACAT_LOG_LEVEL` | `level.root` |
@@ -116,9 +118,9 @@ limit.access.referer.maxLength=2048
 | `TAMACAT_LOG_SERVICE_NAME` | `ecs.service.name` |
 | `TAMACAT_LOG_SERVICE_ENVIRONMENT` | `ecs.service.environment` |
 
-未知のキーや不正な値は stderr に報告され、その項目だけ既定値が使われます。
+Unknown keys and invalid values are reported to stderr, and the default is used for that entry.
 
-## 出力例
+## Output examples
 
 text:
 ```
@@ -130,9 +132,9 @@ json:
 {"@timestamp":"2026-11-13T13:52:01.123Z","log.level":"INFO","message":"request /index.html completed","ecs.version":"8.11","event.dataset":"app","log.logger":"org.tamacat.httpd.Server","process.thread.name":"http-1","service.name":"myapp","labels":{"reqId":"abc123"}}
 ```
 
-## ビルド
+## Build
 
-Maven Wrapper（Maven 3.10.1、SHA-256 検証付き）を同梱しています。
+The Maven Wrapper (Maven 3.10.1, SHA-256 verified) is included.
 
 ```bash
 ./mvnw install
@@ -142,17 +144,17 @@ Maven Wrapper（Maven 3.10.1、SHA-256 検証付き）を同梱しています�
 ./mvnw -Psbom package
 ```
 
-`-Psbom` で CycloneDX SBOM（`target/bom.json`）を生成します。
+`-Psbom` generates a CycloneDX SBOM (`target/bom.json`).
 
-## リリース手順
+## Release procedure
 
-1. POM のバージョンをリリース版（例: `1.0.0`）にしてコミットし、`main` に push する
-2. `v1.0.0` タグを push すると [release.yml](.github/workflows/release.yml) が動く
-   - ビルド・テスト（失敗・スキップ 0 件）を通過した成果物だけを
-     `tamacat/tamacat.github.io` の `mvn-repo` ブランチと GitHub Releases に公開する
-   - `mvn-repo` への公開は、環境 `release` のレビュー承認後に実行される
-3. POM を次の開発版（例: `1.0.1-SNAPSHOT`）に戻す
+1. Set the POM version to the release version (e.g. `1.0.0`), commit and push to `main`
+2. Pushing the `v1.0.0` tag runs [release.yml](.github/workflows/release.yml)
+   - Only artifacts that pass the build and tests (0 failures, 0 skips) are published
+     to the `mvn-repo` branch of `tamacat/tamacat.github.io` and to GitHub Releases
+   - Publishing to `mvn-repo` runs after approval in the `release` environment
+3. Set the POM back to the next development version (e.g. `1.0.1-SNAPSHOT`)
 
-## ライセンス
+## License
 
 Apache License 2.0

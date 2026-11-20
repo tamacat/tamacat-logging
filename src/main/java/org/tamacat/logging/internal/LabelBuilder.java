@@ -63,7 +63,7 @@ public final class LabelBuilder {
         return rejected;
     }
 
-    /** {@code [A-Za-z0-9_-]{1,64}} — no dots (ECS labels must not contain them), no spaces. */
+    /** {@code [A-Za-z0-9_-]{1,64}} - no dots (ECS labels must not contain them), no spaces. */
     public static boolean isValidKey(String k) {
         if (k == null || k.isEmpty() || k.length() > MAX_KEY_LENGTH) {
             return false;

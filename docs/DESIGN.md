@@ -1,100 +1,102 @@
-# tamacat-logging 要件定義・設計書 (v1.0)
+# tamacat-logging Requirements and Design (v1.0)
 
-> ステータス: **確定**（2026-11-13）。本書に基づき実装済み。
+English | [日本語](DESIGN-ja.md)
+
+> Status: **final** (2026-11-13). The implementation follows this document.
 
 ---
 
-## 1. 目的
+## 1. Purpose
 
-Java 25 向けの、**セキュリティ最優先・依存最小・機能最小**のロギング実装。
-主用途は**コンテナ上で動く Web サーバー**のアプリケーションログ・アクセスログ出力。
-出力先は**標準出力のみ**とし、収集・保存・ローテーションはコンテナ基盤（Docker / Kubernetes / ログコレクタ）に委ねる。
+A **security-first, minimal-dependency, minimal-feature** logging implementation for Java 25.
+Its main use is application and access logging for **web servers running in containers**.
+Output goes to **standard output only**; collection, storage and rotation are left to the container platform (Docker / Kubernetes / log collectors).
 
-Logback / Log4j2 の代替として、「攻撃面（attack surface）を構造的に持たない」ことを最大の設計目標とする。
+As an alternative to Logback / Log4j2, the primary design goal is to **have no attack surface by construction**.
 
-### 1.1 既知の脆弱性クラスと本実装での扱い
+### 1.1 Known vulnerability classes and how they are handled
 
-| 事例 | 原因となった機能 | 本実装での扱い |
+| Case | Feature that caused it | Handling in this implementation |
 |---|---|---|
-| Log4Shell (CVE-2021-44228) | ログメッセージ内の `${...}` Lookup / JNDI | **Lookup・変数展開機能を持たない** |
-| Log4j CVE-2021-45046/45105 | Context Lookup の再帰評価 | 同上 |
-| Logback CVE-2023-6378/6481 | SocketReceiver のデシリアライズ | **ネットワーク送受信・Java シリアライズを持たない** |
-| Logback CVE-2021-42550 | JNDI を使う XML 設定 | **XML 設定・JNDI を持たない** |
-| Logback CVE-2024-12798/12801 | 設定ファイル内の式評価 / SSRF | **式評価・外部参照を持たない** |
-| Jackson の多数の CVE | 汎用 (デ)シリアライザのポリモーフィック型処理 | **JSON は自前の書き出し専用エンコーダ（パース無し）** |
-| ファイル系 Appender の問題 | symlink 追従・パストラバーサル・パーミッション | **ファイル出力自体を持たない** |
-| ログインジェクション (CWE-117) | 改行・制御文字の未エスケープ | **全出力値を形式ごとに強制エスケープ** |
+| Log4Shell (CVE-2021-44228) | `${...}` lookups / JNDI in log messages | **No lookups or variable expansion** |
+| Log4j CVE-2021-45046/45105 | Recursive evaluation of context lookups | Same as above |
+| Logback CVE-2023-6378/6481 | Deserialization in SocketReceiver | **No network I/O, no Java serialization** |
+| Logback CVE-2021-42550 | XML configuration using JNDI | **No XML configuration, no JNDI** |
+| Logback CVE-2024-12798/12801 | Expression evaluation / SSRF in configuration | **No expression evaluation, no external references** |
+| Many Jackson CVEs | Polymorphic typing in a general-purpose (de)serializer | **Own write-only JSON encoder (no parsing)** |
+| File appender issues | Following symlinks, path traversal, permissions | **No file output at all** |
+| Log injection (CWE-117) | Unescaped line breaks and control characters | **Every output value is escaped per format** |
 
 ---
 
-## 2. 要件
+## 2. Requirements
 
-### 2.1 機能要件
+### 2.1 Functional requirements
 
-| ID | 要件 |
+| ID | Requirement |
 |---|---|
-| F-1 | SLF4J 2.x API のバックエンド（`SLF4JServiceProvider`）として動作する |
-| F-2 | `java.lang.System.Logger`（`System.LoggerFinder`）のバックエンドとして動作する |
-| F-3 | Web サーバーの**アクセスログ**専用 API と出力形式（Common / Combined / ECS JSON）を提供する（§4.3） |
-| F-4 | ログレベル: `TRACE / DEBUG / INFO / WARN / ERROR / OFF`、ロガー名の階層単位で設定可能 |
-| F-5 | 出力形式: **テキスト形式**（限定パターン）と **JSON Lines 形式**（1行1 JSON、**ECS 互換**） |
-| F-6 | 出力先: **標準出力のみ**（ファイル・ローテーション・圧縮は持たない） |
-| F-7 | MDC（SLF4J の `MDC`）対応 |
-| F-8 | 例外（スタックトレース、cause チェーン、suppressed）の出力。テキスト形式は複数行（既定）/ 1行化オプション |
-| F-9 | SLF4J 2.x Fluent API の key-value（`addKeyValue`）を構造化フィールドとして出力 |
-| F-10 | **キー名指定による伏字**: MDC / key-value のうち指定キーの値を `***` に置換（正規表現は使わない） |
-| F-11 | 設定: classpath の `tamacat-logging.properties` / システムプロパティ / 環境変数（§5） |
+| F-1 | Works as an SLF4J 2.x backend (`SLF4JServiceProvider`) |
+| F-2 | Works as a `java.lang.System.Logger` backend (`System.LoggerFinder`) |
+| F-3 | Provides a dedicated **access log** API and formats for web servers (Common / Combined / ECS JSON) (§4.3) |
+| F-4 | Log levels `TRACE / DEBUG / INFO / WARN / ERROR / OFF`, configurable per logger-name hierarchy |
+| F-5 | Output formats: **plain text** (restricted pattern) and **JSON Lines** (one JSON object per line, **ECS compatible**) |
+| F-6 | Output destination: **standard output only** (no files, rotation or compression) |
+| F-7 | MDC (SLF4J `MDC`) support |
+| F-8 | Exception output (stack trace, cause chain, suppressed). Text format: multi-line (default) or single-line option |
+| F-9 | SLF4J 2.x fluent API key-values (`addKeyValue`) are output as structured fields |
+| F-10 | **Masking by key name**: values of the listed MDC / key-value keys are replaced with `***` (no regular expressions) |
+| F-11 | Configuration: `tamacat-logging.properties` on the classpath / system properties / environment variables (§5) |
 
-### 2.2 非機能要件（セキュリティ）
+### 2.2 Non-functional requirements (security)
 
-| ID | 要件 |
+| ID | Requirement |
 |---|---|
-| S-1 | **ランタイム依存ゼロ**。`slf4j-api` は optional（SLF4J を使うアプリだけが持つ） |
-| S-2 | ログ対象データ（メッセージ・引数・MDC・例外メッセージ等）を**一切評価しない**。SLF4J の `{}` 置換は一回のみで、置換結果を再走査しない |
-| S-3 | テキスト形式で CR/LF・制御文字（C0/C1, DEL）・ESC・双方向制御文字を**必ずエスケープ**し、行偽装・端末エスケープ攻撃を防ぐ |
-| S-4 | JSON は RFC 8259 準拠の厳格エスケープ + U+2028/2029・不正サロゲート処理。キー名も同様 |
-| S-5 | 入力長・キー数・スタック深さの上限で切り詰め、ログ経由の DoS を抑止 |
-| S-6 | ネットワーク I/O、ファイル I/O（設定読込を除く）、JNDI、JMX、スクリプト、Java シリアライズ、設定からの任意クラスロードを**実装しない** |
-| S-7 | 設定は `java.util.Properties` 形式のみ（XML/YAML 不可）。設定値の変数展開もしない |
-| S-8 | ロギング処理中の例外を呼び出し元へ伝播させない。内部エラーは stderr にレート制限付きで報告 |
-| S-9 | `toString()` が例外を投げる/巨大でも安全に処理（捕捉して代替文字列、長さ上限） |
-| S-10 | MDC/kv がトップレベルの予約フィールド（`log.level` 等）を上書きできない構造にする（§4.2） |
+| S-1 | **Zero runtime dependencies**. `slf4j-api` is optional (only applications that use SLF4J have it) |
+| S-2 | Logged data (messages, arguments, MDC, exception messages, ...) is **never evaluated**. SLF4J `{}` substitution happens once and the result is never re-scanned |
+| S-3 | The text format **always escapes** CR/LF, control characters (C0/C1, DEL), ESC and bidirectional controls, preventing forged lines and terminal escape attacks |
+| S-4 | JSON uses strict RFC 8259 escaping plus handling of U+2028/2029 and invalid surrogates. Keys are escaped too |
+| S-5 | Input length, key count and stack depth are capped (truncated) to prevent DoS through logging |
+| S-6 | **No** network I/O, file I/O (except reading configuration), JNDI, JMX, scripting, Java serialization or loading arbitrary classes from configuration |
+| S-7 | Configuration is `java.util.Properties` only (no XML/YAML). Values are never expanded |
+| S-8 | Exceptions during logging never propagate to the caller. Internal errors are reported to stderr with rate limiting |
+| S-9 | `toString()` that throws or returns huge strings is handled safely (caught and replaced, length-capped) |
+| S-10 | MDC / key-values cannot overwrite reserved top-level fields (`log.level` etc.) (§4.2) |
 
-### 2.3 非機能要件（その他）
+### 2.3 Non-functional requirements (other)
 
-| ID | 要件 |
+| ID | Requirement |
 |---|---|
-| N-1 | Java 25 ベースライン、JPMS 対応。仮想スレッドでピン留めを起こさない（`ReentrantLock`） |
-| N-2 | 小さなコードベース（目標: SLF4J 対応を除き 2,000 行以下 ※空行・コメント除く）で全行監査可能 |
-| N-3 | 再現可能ビルド、CycloneDX SBOM、Maven Enforcer による依存追加禁止 |
-| N-4 | テストのみ JUnit 5（test スコープ） |
-| N-5 | **同期出力のみ**。1イベントごとに flush（コンテナ停止・OOM Kill 時の欠落を最小化） |
+| N-1 | Java 25 baseline, JPMS module. No virtual-thread pinning (`ReentrantLock`) |
+| N-2 | Small code base (target: 2,000 lines or fewer excluding SLF4J support, blank lines and comments) so that every line can be audited |
+| N-3 | Reproducible builds, CycloneDX SBOM, Maven Enforcer bans added dependencies |
+| N-4 | JUnit only for tests (test scope) |
+| N-5 | **Synchronous output only**, flushed per event (minimizes loss on container stop or OOM kill) |
 
-### 2.4 対象外（意図的に実装しない）
+### 2.4 Out of scope (intentionally not implemented)
 
-- Lookup / 変数置換 / 式評価 / スクリプト
-- XML・YAML・JSON 形式の設定、設定の自動リロード
-- ファイル出力、ローテーション、圧縮、stderr 出力先
-- ネットワーク Appender（Socket, Syslog, SMTP, HTTP, DB 等）と受信側
-- JNDI, JMX, Java シリアライズ、プラグイン機構
-- 非同期出力
-- `java.util.logging`（JUL）Handler（必要なら利用者側で `jul-to-slf4j`）
-- Log4j API / Commons Logging ブリッジ
-- Marker によるフィルタリング、フィルタチェーン
-- 色付きコンソール出力
-- メッセージ本文のパターン検出による伏字（誤検知・ReDoS リスク）
+- Lookups / variable substitution / expression evaluation / scripting
+- XML, YAML or JSON configuration; automatic configuration reload
+- File output, rotation, compression, stderr as a destination
+- Network appenders (socket, syslog, SMTP, HTTP, DB, ...) and their receivers
+- JNDI, JMX, Java serialization, plugin mechanism
+- Asynchronous output
+- A `java.util.logging` (JUL) handler (use `jul-to-slf4j` if needed)
+- Log4j API / Commons Logging bridges
+- Marker-based filtering, filter chains
+- Colored console output
+- Masking by detecting patterns in message text (false positives, ReDoS risk)
 
 ---
 
-## 3. アーキテクチャ
+## 3. Architecture
 
-### 3.1 成果物とモジュール構成
+### 3.1 Artifact and module
 
-成果物は **`org.tamacat:tamacat-logging` の jar 1つ**（JPMS モジュール `org.tamacat.logging`）。利用者の依存記述は1つで済む。
+There is **one jar, `org.tamacat:tamacat-logging`** (JPMS module `org.tamacat.logging`). Users declare a single dependency.
 
 ```java
 module org.tamacat.logging {
-    requires static org.slf4j;          // optional: 実行時に無くてよい
+    requires static org.slf4j;          // optional: may be absent at run time
     exports org.tamacat.logging;
     exports org.tamacat.logging.access;
     provides java.lang.System.LoggerFinder with ...jdk.TamacatLoggerFinder;
@@ -102,140 +104,140 @@ module org.tamacat.logging {
 }
 ```
 
-- `slf4j-api` は `<optional>true</optional>`。SLF4J プロバイダは SLF4J 自身が ServiceLoader で探したときだけロードされるため、
-  slf4j-api が無い環境（System.Logger のみ利用）では一切ロードされず、推移的依存も 0
-- モジュールパス / クラスパス × slf4j-api 有り / 無しの4通りで動作確認済み
-- `internal` パッケージは export しない（同一モジュール内でのみ使用）
-- ライセンス: Apache License 2.0
-- `System.LoggerFinder` を提供するため、JDK 内部（`java.net.http` 等）の System.Logger 出力も集約される
+- `slf4j-api` is `<optional>true</optional>`. The SLF4J provider is loaded only when SLF4J itself looks it up through ServiceLoader,
+  so without slf4j-api (System.Logger only) it is never loaded and there are no transitive dependencies
+- Verified on module path and class path, each with and without slf4j-api
+- The `internal` package is not exported (used only inside the module)
+- License: Apache License 2.0
+- Because a `System.LoggerFinder` is provided, System.Logger output from JDK internals (`java.net.http` etc.) is captured too
 
-（当初は core / slf4j / parent の3成果物に分けていたが、利用者の記述を1つにするため 1.0.0 リリース前に統合した）
+(It was first split into three artifacts, core / slf4j / parent, and merged before the 1.0.0 release so that users declare only one dependency.)
 
-### 3.2 処理フロー
+### 3.2 Processing flow
 
 ```
  SLF4J Logger ──┐
- System.Logger ─┴─▶ LoggerContext ─▶ Logger(level判定) ─▶ LogEvent ──┐
-                                                                     ├─▶ Layout ─▶ StdoutSink
- AccessLogger ───────────────────────────────────────▶ AccessLogEntry ┘   (byte[])   (lock + write + flush)
+ System.Logger ─┴─▶ LoggerContext ─▶ Logger(level check) ─▶ LogEvent ──┐
+                                                                       ├─▶ Layout ─▶ StdoutSink
+ AccessLogger ─────────────────────────────────────────▶ AccessLogEntry ┘   (byte[])   (lock + write + flush)
 ```
 
-- **LogEvent** (`record`, 不変): `Instant timestamp, Level level, String loggerName, String threadName, String message, Map<String,String> labels, Throwable thrown`
-- メッセージ整形はレベル判定後のみ実施
-- **Layout** はイベント → `byte[]` の純関数。エスケープを迂回する API を持たない
-- **StdoutSink**: `new FileOutputStream(FileDescriptor.out)` に直接書き込む。
-  `System.out` を経由しないため、アプリが `System.setOut()` でロガーへリダイレクトしても無限再帰にならない
-- 1イベント分のバイト列を組み立ててから、ロック内で1回の `write` + `flush`（行の混線を防ぐ）
+- **LogEvent** (immutable `record`): `Instant timestamp, Level level, String loggerName, String threadName, String message, Map<String,String> labels, Throwable thrown`
+- Messages are formatted only after the level check
+- A **Layout** is a pure function from event to bytes. There is no API that bypasses escaping
+- **StdoutSink** writes directly to `new FileOutputStream(FileDescriptor.out)`.
+  It does not use `System.out`, so an application that redirects `System.out` into a logger with `System.setOut()` cannot cause infinite recursion
+- The bytes of one event are built first and then written with a single `write` + `flush` under a lock (records never interleave)
 
-### 3.3 主要クラス
+### 3.3 Main classes
 
-公開 API は `org.tamacat.logging` と `org.tamacat.logging.access` のみ。
+The public API is `org.tamacat.logging` and `org.tamacat.logging.access` only.
 
-| パッケージ | クラス | 役割 |
+| Package | Class | Role |
 |---|---|---|
-| `org.tamacat.logging`（公開） | `Level` (enum) | レベル定義 |
-| | `LoggerContext` | エンジン本体（設定保持・レベル判定・出力）。`configure()` / `setOutput()` |
-| | `Configuration` | 不変設定 + 検証付き Builder、`fromProperties()` |
-| | `LogContext` | スレッドローカルの文脈（MDC の実体、非継承） |
-| | `ConfigLoader`（非公開） | Properties / 環境変数 / システムプロパティの読込 |
-| `org.tamacat.logging.access`（公開） | `AccessLogger` / `AccessLogEntry` / `AccessFormat` | アクセスログ API |
-| `org.tamacat.logging.internal` | `Layout` (sealed) | `TextLayout`, `EcsJsonLayout` のみ |
-| | `AccessLayout` | common / combined / json の固定実装 |
-| | `PatternParser` | 限定パターンの解析（sealed Token） |
-| | `TextEscaper` / `JsonEscaper` / `Chars` | エスケープ（テスト最重点） |
-| | `LabelBuilder` | ラベルのキー検証・伏字・件数/長さ制限 |
-| | `MessageFormatter` | `{}` / `{0}` の単純置換（再帰なし、上限付き） |
-| | `ThrowableRenderer` | スタックトレース整形（循環検出・上限付き） |
-| | `StdoutSink` | 標準出力への同期書き込み |
-| | `StatusReporter` | 内部エラーの stderr 報告（レート制限） |
-| | `Safe` | 例外を投げない toString / 切り詰め |
-| `org.tamacat.logging.jdk`（非公開） | `TamacatLoggerFinder` / `TamacatSystemLogger` | `System.LoggerFinder` 実装 |
-| `org.tamacat.logging.slf4j`（非公開） | `TamacatServiceProvider` ほか | SLF4J プロバイダ、`LoggingEventAware` 対応ロガー、MDC アダプタ |
+| `org.tamacat.logging` (public) | `Level` (enum) | Level definitions |
+| | `LoggerContext` | The engine (configuration, level checks, output). `configure()` / `setOutput()` |
+| | `Configuration` | Immutable configuration with a validating builder, `fromProperties()` |
+| | `LogContext` | Thread-local context (backing store of MDC, not inherited) |
+| | `ConfigLoader` (non-public) | Reads properties / environment variables / system properties |
+| `org.tamacat.logging.access` (public) | `AccessLogger` / `AccessLogEntry` / `AccessFormat` | Access log API |
+| `org.tamacat.logging.internal` | `Layout` (sealed) | Only `TextLayout` and `EcsJsonLayout` |
+| | `AccessLayout` | Fixed common / combined / json implementations |
+| | `PatternParser` | Parses the restricted pattern (sealed tokens) |
+| | `TextEscaper` / `JsonEscaper` / `Chars` | Escaping (most heavily tested) |
+| | `LabelBuilder` | Label key validation, masking, count/length limits |
+| | `MessageFormatter` | Plain `{}` / `{0}` substitution (no recursion, bounded) |
+| | `ThrowableRenderer` | Stack trace rendering (cycle detection, limits) |
+| | `StdoutSink` | Synchronous writes to standard output |
+| | `StatusReporter` | Reports internal errors to stderr (rate limited) |
+| | `Safe` | toString / truncation that never throws |
+| `org.tamacat.logging.jdk` (non-public) | `TamacatLoggerFinder` / `TamacatSystemLogger` | `System.LoggerFinder` implementation |
+| `org.tamacat.logging.slf4j` (non-public) | `TamacatServiceProvider` and others | SLF4J provider, `LoggingEventAware` logger, MDC adapter |
 
-拡張点（Layout / Token）は sealed / final とし、設定から任意クラスを読み込む経路を持たない。
+Extension points (Layout / Token) are sealed or final; there is no path for configuration to load arbitrary classes.
 
-**System.Logger の書式**: `{0}`, `{1}`… を引数で単純置換する。`java.text.MessageFormat` は使わない
-（`{0,choice,...}` のサブフォーマットが置換結果を再評価するため）。
+**System.Logger formatting**: `{0}`, `{1}`, ... are replaced by plain substitution. `java.text.MessageFormat` is not used
+(its `{0,choice,...}` sub-formats re-evaluate substituted text).
 
 ---
 
-## 4. 出力形式
+## 4. Output formats
 
-### 4.1 テキスト形式
+### 4.1 Plain text
 
-既定パターン:
+Default pattern:
 ```
 %d %level [%thread] %logger{36} - %msg%labels%n%ex
 ```
-出力例:
+Example:
 ```
 2026-11-13T13:52:01.123Z INFO  [http-1] o.t.httpd.Server - Request completed {reqId="abc123", status="200"}
 ```
 
-`%labels` の値は `"` で囲み、値中の `"` と `\` をエスケープする（`a", role="admin` のような値で項目を偽装できない）。
+`%labels` values are quoted with `"`, and `"` and `\` inside values are escaped (a value such as `a", role="admin` cannot forge fields).
 
-**限定パターン**（以下の固定トークンのみ。未知トークンは設定エラー）:
+**Restricted pattern** (only these fixed tokens; unknown tokens are configuration errors):
 
-| トークン | 内容 |
+| Token | Content |
 |---|---|
-| `%d` | ISO-8601 UTC タイムスタンプ（書式指定不可） |
-| `%level` | レベル（5桁左詰め） |
-| `%thread` | スレッド名 |
-| `%logger` / `%logger{n}` | ロガー名 / n 文字に省略 |
-| `%msg` | メッセージ |
-| `%labels` / `%labels{key}` | MDC+kv 全体 / 指定キー |
-| `%ex` / `%ex{oneline}` | 例外（複数行 / 1行化） |
-| `%n` `%%` | 改行 / `%` |
+| `%d` | ISO-8601 UTC timestamp (format not configurable) |
+| `%level` | Level (left-aligned, width 5) |
+| `%thread` | Thread name |
+| `%logger` / `%logger{n}` | Logger name / abbreviated to n characters |
+| `%msg` | Message |
+| `%labels` / `%labels{key}` | All MDC + key-values / a single key |
+| `%ex` / `%ex{oneline}` | Exception (multi-line / single line) |
+| `%n` `%%` | Line break / `%` |
 
-- パターンは設定時に一度だけ解析してトークン列にする。ログデータがパターンとして解釈されることはない
-- 固定文字列部分にも制御文字は許可しない（設定エラー）
+- The pattern is parsed once, at configuration time, into a token list. Log data is never interpreted as a pattern
+- Control characters are not allowed in the literal parts either (configuration error)
 
-**エスケープ規則（全ての可変フィールドに適用）**:
+**Escaping rules (applied to every variable field)**:
 
-| 入力 | 出力 |
+| Input | Output |
 |---|---|
 | `\` | `\\` |
 | CR / LF / TAB | `\r` / `\n` / `\t` |
-| その他 C0 (U+0000–001F), DEL, C1 (U+0080–009F) | `\u00XX`（ESC も含むため端末エスケープ攻撃不可） |
-| U+2028 / U+2029 | ` ` / ` ` |
-| 双方向制御 (U+202A–202E, U+2066–2069) | `‮` 等（Trojan Source 型の表示偽装対策） |
-| 不正サロゲート | `�` |
+| Other C0 (U+0000–001F), DEL, C1 (U+0080–009F) | `\u00XX` (includes ESC, so terminal escape attacks are impossible) |
+| U+2028 / U+2029 | `\u2028` / `\u2029` |
+| Bidirectional controls (U+202A–202E, U+2066–2069) | `\u202E` etc. (prevents Trojan-Source-style display forgery) |
+| Invalid surrogates | `\uFFFD` |
 
-**例外出力**:
-- 既定（複数行）: スタックトレース各行の**先頭を必ず TAB** とし、例外メッセージ内の改行はエスケープ。
-  「TAB で始まらない行 = 新レコード」が保証され、偽装行を作れない
-- `%ex{oneline}`: フレームを ` | ` 区切りで1行に連結。例: `pattern=%d %level [%thread] %logger{36} - %msg%labels%ex{oneline}%n`
-- パターンに `%n` が無くても、1レコードは必ず `\n` で終わる
+**Exceptions**:
+- Default (multi-line): **every stack trace line starts with a TAB**, and line breaks in exception messages are escaped.
+  "A line that does not start with a TAB is a new record" is guaranteed, so forged lines cannot be produced
+- `%ex{oneline}`: frames are joined on one line with ` | `. Example: `pattern=%d %level [%thread] %logger{36} - %msg%labels%ex{oneline}%n`
+- Even if the pattern has no `%n`, every record ends with `\n`
 
-### 4.2 JSON Lines 形式（ECS 互換）
+### 4.2 JSON Lines (ECS compatible)
 
-ecs-logging（Elastic 公式仕様）と同じ**ドット区切りフラットキー**、フィールド順固定。
+**Dotted flat keys** as in ecs-logging (Elastic's official specification), in a fixed field order.
 
 ```json
 {"@timestamp":"2026-11-13T13:52:01.123Z","log.level":"ERROR","message":"Request failed","ecs.version":"8.11","event.dataset":"app","log.logger":"org.tamacat.httpd.Server","process.thread.name":"http-1","service.name":"myapp","labels":{"reqId":"abc123","password":"***"},"error.type":"java.io.IOException","error.message":"Broken pipe","error.stack_trace":"java.io.IOException: Broken pipe\n\tat ..."}
 ```
 
-| ECS フィールド | 内容 |
+| ECS field | Content |
 |---|---|
-| `@timestamp` | ISO-8601 UTC、ミリ秒 |
-| `log.level` | `TRACE`〜`ERROR` |
-| `message` | 置換済みメッセージ |
-| `ecs.version` | 準拠 ECS バージョン（固定値） |
-| `event.dataset` | `app`（アプリログ）/ `access`（アクセスログ）。標準出力に混在するため識別に使う |
-| `log.logger` | ロガー名 |
-| `process.thread.name` | スレッド名 |
-| `service.name` / `service.version` / `service.environment` | 設定値（任意、静的文字列） |
-| `labels` | MDC + key-value（**文字列のみ**、同名キーは key-value 優先） |
-| `error.type` / `error.message` / `error.stack_trace` | 例外がある場合のみ |
+| `@timestamp` | ISO-8601 UTC, milliseconds |
+| `log.level` | `TRACE` to `ERROR` |
+| `message` | Formatted message |
+| `ecs.version` | ECS version followed (fixed) |
+| `event.dataset` | `app` (application log) / `access` (access log). Distinguishes them on the shared stdout |
+| `log.logger` | Logger name |
+| `process.thread.name` | Thread name |
+| `service.name` / `service.version` / `service.environment` | Configured static strings (optional) |
+| `labels` | MDC + key-values (**strings only**; a key-value wins over an MDC entry with the same key) |
+| `error.type` / `error.message` / `error.stack_trace` | Only when there is an exception |
 
-- MDC/kv は `labels` 配下に隔離（トップレベル展開すると攻撃者制御のキーで `log.level` 等を偽装・重複できるため）
-- `labels` のキー名は `[A-Za-z0-9_\-]{1,64}` に制限、違反キーは破棄して内部カウンタに計上
-- 重複キーを生成しない。値は全て文字列（型推論しない）
-- 非 ASCII は UTF-8 のまま（オプションで `\uXXXX` 化）
+- MDC / key-values are confined to `labels` (expanding them at the top level would let attacker-controlled keys forge or duplicate `log.level` etc.)
+- `labels` keys are restricted to `[A-Za-z0-9_\-]{1,64}`; other keys are dropped and counted internally
+- No duplicate keys are produced. All values are strings (no type inference)
+- Non-ASCII stays UTF-8 (optionally `\uXXXX`)
 
-### 4.3 アクセスログ
+### 4.3 Access log
 
-Web サーバーがリクエスト完了時に呼び出す専用 API。SLF4J 非依存（slf4j-api 無しで利用可）。
+A dedicated API that web servers call when a request completes. Independent of SLF4J (works without slf4j-api).
 
 ```java
 AccessLogger.get().log(new AccessLogEntry(
@@ -245,52 +247,52 @@ AccessLogger.get().log(new AccessLogEntry(
     Duration elapsed, String requestId));
 ```
 
-書式は**固定3種のみ**:
+**Only three fixed formats**:
 
-| format | 出力 |
+| format | Output |
 |---|---|
 | `common` | Apache Common Log Format: `%h %l %u [%t] "%r" %>s %b` |
-| `combined` | `common` + ` "Referer" "User-Agent"` + 応答時間(µs) + リクエストID |
-| `json` | ECS: `@timestamp`, `event.dataset=access`, `source.address`, `user.name`, `http.request.method`, `url.original`, `http.version`, `http.response.status_code`, `http.response.body.bytes`, `http.request.referrer`, `user_agent.original`, `event.duration`(ns), `http.request.id` |
+| `combined` | `common` + ` "Referer" "User-Agent"` + response time (µs) + request id |
+| `json` | ECS: `@timestamp`, `event.dataset=access`, `source.address`, `user.name`, `http.request.method`, `url.original`, `http.version`, `http.response.status_code`, `http.response.body.bytes`, `http.request.referrer`, `user_agent.original`, `event.duration` (ns), `http.request.id` |
 
-- テキスト系のエスケープは Apache httpd の `ap_escape_logitem` と同じ方針: `"` → `\"`、`\` → `\\`、制御文字・非 ASCII バイト → `\xHH`
-- リクエストライン / User-Agent / Referer / ユーザー名は攻撃者が完全に制御できる値のため、エスケープを省略する API は提供しない
-- 長さ上限（既定: URI 2,048 / User-Agent 512 / Referer 2,048 / requestId 128）
-- アクセスログはレベルを持たず `accesslog.enabled` で ON/OFF
+- Text formats escape like Apache httpd's `ap_escape_logitem`: `"` → `\"`, `\` → `\\`, control and non-ASCII bytes → `\xHH`
+- The request line, User-Agent, Referer and user name are fully attacker-controlled, so there is no API that skips escaping
+- Length limits (defaults: URI 2,048 / User-Agent 512 / Referer 2,048 / request id 128)
+- The access log has no level; it is switched on and off with `accesslog.enabled`
 
-### 4.4 伏字（マスキング）
+### 4.4 Masking
 
-- 設定 `mask.keys` に列挙したキー名（大文字小文字無視、完全一致）に該当する MDC / key-value の値を `***` に置換
-- 既定: `password,passwd,secret,token,access_token,refresh_token,authorization,cookie,set-cookie,api_key,apikey`
-- 正規表現・部分一致・メッセージ本文の走査は行わない（ReDoS・誤検知・性能劣化を避ける）
-- アクセスログの `remoteUser` 以外の URI クエリ文字列は伏字対象外（必要ならサーバー側で除去して渡す）
+- Values of MDC / key-value entries whose key is listed in `mask.keys` (case-insensitive exact match) are replaced with `***`
+- Default: `password,passwd,secret,token,access_token,refresh_token,authorization,cookie,set-cookie,api_key,apikey`
+- No regular expressions, partial matches or scanning of message text (avoids ReDoS, false positives and slowdowns)
+- URI query strings in the access log are not masked (the server should strip them before logging if needed)
 
-### 4.5 上限値（既定、設定で変更可）
+### 4.5 Limits (defaults, configurable)
 
-| 項目 | 既定 |
+| Item | Default |
 |---|---|
-| メッセージ最大長 | 8,192 文字（超過は切り詰め + `...[truncated]`） |
-| label 値の最大長 | 1,024 文字 |
-| label の最大キー数 | 32 |
-| スタックトレース最大フレーム数 | 128（cause 合計） |
-| cause チェーン最大深さ | 16（循環参照検出あり） |
+| Maximum message length | 8,192 characters (longer messages are truncated + `...[truncated]`) |
+| Maximum label value length | 1,024 characters |
+| Maximum number of labels | 32 |
+| Maximum stack trace frames | 128 (total including causes) |
+| Maximum cause chain depth | 16 (with cycle detection) |
 
 ---
 
-## 5. 設定
+## 5. Configuration
 
-### 5.1 読み込み順（後勝ち）
+### 5.1 Load order (later wins)
 
-1. 組込み既定値（`INFO` 以上、テキスト形式）
-2. classpath の `tamacat-logging.properties`（またはシステムプロパティ `tamacat.logging.config` で指定したファイル）
-3. 環境変数（コンテナ向け。固定の名前のみ、§5.3）
-4. システムプロパティ `tamacat.logging.*`
+1. Built-in defaults (`INFO` and above, text format)
+2. `tamacat-logging.properties` on the classpath (or the file named by the system property `tamacat.logging.config`)
+3. Environment variables (for containers; fixed names only, §5.3)
+4. System properties `tamacat.logging.*`
 
-- 起動時に1回だけ読込（リロード無し）。プログラム API による再設定は可
-- 未知キー・不正値は stderr に報告し、その項目は既定値を使う（アプリは停止しない）
-- 値の `${...}` 展開は行わない
+- Loaded once at startup (no reload). Reconfiguration through the programmatic API is possible
+- Unknown keys and invalid values are reported to stderr and the default is used for that entry (the application keeps running)
+- `${...}` in values is never expanded
 
-### 5.2 設定例（properties）
+### 5.2 Example (properties)
 
 ```properties
 format=json
@@ -311,9 +313,9 @@ mask.keys=password,token,authorization,cookie
 limit.message.maxLength=8192
 ```
 
-### 5.3 環境変数
+### 5.3 Environment variables
 
-| 環境変数 | 対応キー |
+| Environment variable | Key |
 |---|---|
 | `TAMACAT_LOG_FORMAT` | `format` (`text` / `json`) |
 | `TAMACAT_LOG_LEVEL` | `level.root` |
@@ -321,51 +323,52 @@ limit.message.maxLength=8192
 | `TAMACAT_LOG_SERVICE_NAME` | `ecs.service.name` |
 | `TAMACAT_LOG_SERVICE_ENVIRONMENT` | `ecs.service.environment` |
 
-固定の対応表のみで、任意の環境変数を参照する手段は提供しない。
+Only this fixed mapping exists; there is no way to reference arbitrary environment variables.
 
 ---
 
-## 6. ライセンス方針
+## 6. Licensing policy
 
-| 参考元 | ライセンス | 扱い |
+| Reference | License | Use |
 |---|---|---|
-| SLF4J API | MIT | **依存として利用**（コードコピー無し） |
-| `slf4j-simple` | MIT | Provider 実装の最小例として参考。流用時は著作権表示を保持 |
-| Logback | EPL 1.0 / LGPL 2.1 | **コード流用しない**（設計参考のみ） |
-| Log4j2 / tinylog 2 | Apache 2.0 | 設計参考のみ。流用する場合は NOTICE に明記 |
-| ecs-logging (仕様) | Apache 2.0 | フィールド定義の参照のみ |
+| SLF4J API | MIT | **Used as a dependency** (no code copied) |
+| `slf4j-simple` | MIT | Reference for a minimal provider. Keep the copyright notice if code is reused |
+| Logback | EPL 1.0 / LGPL 2.1 | **No code reused** (design reference only) |
+| Log4j2 / tinylog 2 | Apache 2.0 | Design reference only. Mention in NOTICE if code is reused |
+| ecs-logging (specification) | Apache 2.0 | Field definitions only |
 
-方針: **原則スクラッチ実装**。本プロジェクトは Apache License 2.0。
-
----
-
-## 7. サプライチェーン・品質保証
-
-- ランタイム依存: 0（`slf4j-api` は optional）
-- Maven Enforcer `bannedDependencies` で compile/runtime 依存の追加をビルド失敗にする
-- CycloneDX SBOM 生成、OSV-Scanner / OWASP Dependency-Check、SpotBugs + FindSecBugs
-- テスト重点:
-  - エスケープのプロパティベーステスト（全コードポイント・ランダム入力で「出力に生の改行/制御文字が残らない」「JSON が常にパース可能」「1イベント=1行（JSON）」）
-  - `${jndi:...}` 等の既知攻撃文字列がそのまま文字列として出力されること
-  - 予約フィールド偽装（MDC キー `log.level` 等）が不可能なこと
-  - マルチスレッド・仮想スレッドでの行混線がないこと
-  - テスト用 JSON パーサは test スコープのみ
+Policy: **written from scratch**. This project is licensed under the Apache License 2.0.
 
 ---
 
-## 8. 決定事項一覧
+## 7. Supply chain and quality assurance
 
-| # | 事項 | 決定 |
+- Runtime dependencies: 0 (`slf4j-api` is optional)
+- Maven Enforcer `bannedDependencies` fails the build if a compile/runtime dependency is added
+- CycloneDX SBOM; OSV-Scanner / OWASP Dependency-Check, SpotBugs + FindSecBugs
+- Test focus:
+  - Property-based tests of escaping (all code points and random input: "no raw line breaks or control characters in the output", "JSON is always parseable", "one event = one line (JSON)")
+  - Known attack strings such as `${jndi:...}` are output as plain text
+  - Reserved fields cannot be forged (MDC key `log.level` etc.)
+  - No interleaved lines with many threads or virtual threads
+  - Repository hygiene: Java sources are ASCII-only and no file contains bidirectional or other invisible control characters
+  - The JSON parser used by tests is test scope only
+
+---
+
+## 8. Decisions
+
+| # | Topic | Decision |
 |---|---|---|
-| Q1 | 対応 API | SLF4J 2.x プロバイダ + System.Logger |
-| Q2 | アクセスログ | 含める（専用 API、common / combined / ECS JSON） |
-| Q3 | テキスト書式 | 限定パターン（固定トークンのみ） |
-| Q4 | 非同期出力 | 同期のみ |
-| Q5 | JSON 形式 | ECS 互換（MDC/kv は `labels` 配下） |
-| Q6 | 出力先 | **標準出力のみ**（ファイル・ローテーション・圧縮なし） |
-| Q7 | マスキング | キー名完全一致で伏字（正規表現なし） |
-| Q8 | ライセンス / 座標 | Apache 2.0 / `org.tamacat` / `org.tamacat.logging` |
-| Q9 | 例外のテキスト出力 | 複数行（行頭 TAB 強制）+ `%ex{oneline}` |
-| C1 | 環境変数による設定上書き | 固定の5変数のみ（§5.3） |
-| C2 | テキスト形式でのアプリログ/アクセスログ混在 | アクセスログは Common/Combined のまま出力。コンテナでは `format=json` を推奨 |
-| C3 | ERROR の stderr 分離 | しない（標準出力のみ。stderr は内部エラー報告専用） |
+| Q1 | Supported APIs | SLF4J 2.x provider + System.Logger |
+| Q2 | Access log | Included (dedicated API, common / combined / ECS JSON) |
+| Q3 | Text format | Restricted pattern (fixed tokens only) |
+| Q4 | Asynchronous output | Synchronous only |
+| Q5 | JSON format | ECS compatible (MDC / key-values under `labels`) |
+| Q6 | Destination | **Standard output only** (no files, rotation or compression) |
+| Q7 | Masking | Exact key-name match (no regular expressions) |
+| Q8 | License / coordinates | Apache 2.0 / `org.tamacat:tamacat-logging` / module `org.tamacat.logging` |
+| Q9 | Exceptions in text format | Multi-line (TAB-prefixed lines enforced) + `%ex{oneline}` |
+| C1 | Overrides through environment variables | Five fixed variables only (§5.3) |
+| C2 | Application and access logs mixed in text format | Access log stays in Common/Combined format. `format=json` is recommended in containers |
+| C3 | Separate stderr for ERROR | No (standard output only; stderr is only for internal error reports) |

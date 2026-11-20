@@ -26,10 +26,10 @@ class EscaperTest {
     void textEscapesLineBreaksAndAnsi() {
         assertEquals("a\\r\\nb", TextEscaper.escape("a\r\nb"));
         assertEquals("\\u001B[31mred", TextEscaper.escape("\u001B[31mred"));
-        assertEquals("x\\u202Ey", TextEscaper.escape("x‮y"));
+        assertEquals("x\\u202Ey", TextEscaper.escape("x\u202Ey"));
         assertEquals("back\\\\slash", TextEscaper.escape("back\\slash"));
         assertEquals("\\uFFFD", TextEscaper.escape("\uD800"));
-        assertEquals("😀", TextEscaper.escape("😀"));
+        assertEquals("\uD83D\uDE00", TextEscaper.escape("\uD83D\uDE00"));
     }
 
     @Test
@@ -45,7 +45,7 @@ class EscaperTest {
                 if (!Character.isSurrogate((char) c)) {
                     assertEquals(in, parsed);
                 } else {
-                    assertEquals("�", parsed);
+                    assertEquals("\uFFFD", parsed);
                 }
                 if (ascii) {
                     assertFalse(out.chars().anyMatch(ch -> ch > 0x7E));
@@ -74,7 +74,7 @@ class EscaperTest {
     @Test
     void accessEscapingMatchesApacheStyle() {
         StringBuilder sb = new StringBuilder();
-        AccessLayout.escape("a\"b\\c\r\n\u0001 あ", sb, false);
+        AccessLayout.escape("a\"b\\c\r\n\u0001 \u3042", sb, false);
         assertEquals("a\\\"b\\\\c\\r\\n\\x01 \\xe3\\x81\\x82", sb.toString());
         sb.setLength(0);
         AccessLayout.escape("evil user", sb, true);
@@ -83,7 +83,7 @@ class EscaperTest {
 
     @Test
     void truncateDoesNotSplitSurrogatePairs() {
-        String s = "ab😀cd";
+        String s = "ab\uD83D\uDE00cd";
         assertEquals("ab" + Safe.TRUNCATED, Safe.truncate(s, 3));
         assertEquals(s, Safe.truncate(s, 100));
     }
