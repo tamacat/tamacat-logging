@@ -61,7 +61,7 @@ jobs:
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import glob, sys, xml.etree.ElementTree as E
           t = f = e = s = 0
-          for p in glob.glob('*/target/surefire-reports/TEST-*.xml'):
+          for p in glob.glob('target/surefire-reports/TEST-*.xml'):
               r = E.parse(p).getroot()
               t += int(r.get('tests', 0)); f += int(r.get('failures', 0))
               e += int(r.get('errors', 0)); s += int(r.get('skipped', 0))
@@ -76,14 +76,10 @@ jobs:
         run: |
           v='${{ steps.version.outputs.version }}'
           mkdir dist
-          cp pom.xml "dist/tamacat-logging-parent-${v}.pom"
+          cp pom.xml "dist/tamacat-logging-${v}.pom"
+          cp "target/tamacat-logging-${v}.jar" "target/tamacat-logging-${v}-sources.jar" dist/
           cp target/bom.json "dist/tamacat-logging-${v}-bom.json"
           cp target/bom.xml "dist/tamacat-logging-${v}-bom.xml"
-          for m in core slf4j; do
-            cp "tamacat-logging-${m}/pom.xml" "dist/tamacat-logging-${m}-${v}.pom"
-            cp "tamacat-logging-${m}/target/tamacat-logging-${m}-${v}.jar" \
-               "tamacat-logging-${m}/target/tamacat-logging-${m}-${v}-sources.jar" dist/
-          done
           (cd dist && sha256sum * > SHA256SUMS)
           echo "sha256=$(sha256sum dist/SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           { echo '```'; (cd dist && ls -l --time-style=+ * && cat SHA256SUMS); echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -133,7 +129,7 @@ jobs:
           PAT: ${{ secrets.MVN_REPO_PAT }}
         run: |
           repo="$RUNNER_TEMP/mvn-repo"
-          base='org/tamacat/tamacat-logging-(parent|core|slf4j)'
+          base='org/tamacat/tamacat-logging'
           vre=$(printf '%s' "$V" | sed 's/\./\\./g')
           auth=$(printf 'x-access-token:%s' "$PAT" | base64 -w0)
           echo "::add-mask::${auth}"
@@ -144,21 +140,16 @@ jobs:
           for attempt in 1 2 3; do
             # Maven runs without the token.
             ./mvnw -B -q "$deploy" -Durl="file://${repo}" -DrepositoryId=mvn-repo \
-              -Dfile="dist/tamacat-logging-parent-${V}.pom" -DpomFile="dist/tamacat-logging-parent-${V}.pom" \
-              -Dpackaging=pom \
+              -DpomFile="dist/tamacat-logging-${V}.pom" \
+              -Dfile="dist/tamacat-logging-${V}.jar" \
+              -Dsources="dist/tamacat-logging-${V}-sources.jar" \
               -Dfiles="dist/tamacat-logging-${V}-bom.json,dist/tamacat-logging-${V}-bom.xml" \
               -Dclassifiers="cyclonedx,cyclonedx" -Dtypes="json,xml"
-            for m in core slf4j; do
-              ./mvnw -B -q "$deploy" -Durl="file://${repo}" -DrepositoryId=mvn-repo \
-                -DpomFile="dist/tamacat-logging-${m}-${V}.pom" \
-                -Dfile="dist/tamacat-logging-${m}-${V}.jar" \
-                -Dsources="dist/tamacat-logging-${m}-${V}-sources.jar"
-            done
             git -C "$repo" add -A
             git -C "$repo" diff --cached --no-renames --name-status > diff.txt
             if grep -q '^D' diff.txt \
                || grep -v -E "^[AM]	${base}/(${vre}/[^/]+|maven-metadata\.xml(\.(md5|sha1|sha256|sha512))?)$" diff.txt | grep -q . \
-               || git -C "$repo" diff --cached -- 'org/tamacat/tamacat-logging-*/maven-metadata.xml' | grep -q '^-[[:space:]]*<version>'; then
+               || git -C "$repo" diff --cached -- "${base}/maven-metadata.xml" | grep -q '^-[[:space:]]*<version>'; then
               cat diff.txt; echo "::error::the change goes beyond tamacat-logging ${V} and its maven-metadata.xml"; exit 1
             fi
             git -C "$repo" commit -q -m "tamacat-logging ${V} (release workflow run ${GITHUB_RUN_ID})"
@@ -198,5 +189,5 @@ jobs:
             || { echo "::error::SHA256SUMS differs from the one verify produced"; exit 1; }
           gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
             --title "tamacat-logging ${V}" --generate-notes \
-            "dist/tamacat-logging-core-${V}.jar" "dist/tamacat-logging-slf4j-${V}.jar" \
+            "dist/tamacat-logging-${V}.jar" "dist/tamacat-logging-${V}-sources.jar" \
             "dist/tamacat-logging-${V}-bom.json" "dist/tamacat-logging-${V}-bom.xml" dist/SHA256SUMS

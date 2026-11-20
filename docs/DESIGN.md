@@ -49,7 +49,7 @@ Logback / Log4j2 の代替として、「攻撃面（attack surface）を構造�
 
 | ID | 要件 |
 |---|---|
-| S-1 | **ランタイム依存ゼロ**（core）。SLF4J 連携モジュールのみ `slf4j-api` に依存 |
+| S-1 | **ランタイム依存ゼロ**。`slf4j-api` は optional（SLF4J を使うアプリだけが持つ） |
 | S-2 | ログ対象データ（メッセージ・引数・MDC・例外メッセージ等）を**一切評価しない**。SLF4J の `{}` 置換は一回のみで、置換結果を再走査しない |
 | S-3 | テキスト形式で CR/LF・制御文字（C0/C1, DEL）・ESC・双方向制御文字を**必ずエスケープ**し、行偽装・端末エスケープ攻撃を防ぐ |
 | S-4 | JSON は RFC 8259 準拠の厳格エスケープ + U+2028/2029・不正サロゲート処理。キー名も同様 |
@@ -65,7 +65,7 @@ Logback / Log4j2 の代替として、「攻撃面（attack surface）を構造�
 | ID | 要件 |
 |---|---|
 | N-1 | Java 25 ベースライン、JPMS 対応。仮想スレッドでピン留めを起こさない（`ReentrantLock`） |
-| N-2 | 小さなコードベース（目標: core 2,000 行以下 ※空行・コメント除く）で全行監査可能 |
+| N-2 | 小さなコードベース（目標: SLF4J 対応を除き 2,000 行以下 ※空行・コメント除く）で全行監査可能 |
 | N-3 | 再現可能ビルド、CycloneDX SBOM、Maven Enforcer による依存追加禁止 |
 | N-4 | テストのみ JUnit 5（test スコープ） |
 | N-5 | **同期出力のみ**。1イベントごとに flush（コンテナ停止・OOM Kill 時の欠落を最小化） |
@@ -88,18 +88,28 @@ Logback / Log4j2 の代替として、「攻撃面（attack surface）を構造�
 
 ## 3. アーキテクチャ
 
-### 3.1 モジュール構成（Maven マルチモジュール）
+### 3.1 成果物とモジュール構成
 
-```
-tamacat-logging/
-├── tamacat-logging-core    … 依存ゼロ。エンジン + System.LoggerFinder + AccessLogger
-│     module org.tamacat.logging
-└── tamacat-logging-slf4j   … SLF4J 2.x プロバイダ（依存: core, slf4j-api）
-      module org.tamacat.logging.slf4j
+成果物は **`org.tamacat:tamacat-logging` の jar 1つ**（JPMS モジュール `org.tamacat.logging`）。利用者の依存記述は1つで済む。
+
+```java
+module org.tamacat.logging {
+    requires static org.slf4j;          // optional: 実行時に無くてよい
+    exports org.tamacat.logging;
+    exports org.tamacat.logging.access;
+    provides java.lang.System.LoggerFinder with ...jdk.TamacatLoggerFinder;
+    provides org.slf4j.spi.SLF4JServiceProvider with ...slf4j.TamacatServiceProvider;
+}
 ```
 
-- groupId: `org.tamacat` / ライセンス: Apache License 2.0
-- core が `System.LoggerFinder` を提供するため、JDK 内部（`java.net.http` 等）の System.Logger 出力も集約される
+- `slf4j-api` は `<optional>true</optional>`。SLF4J プロバイダは SLF4J 自身が ServiceLoader で探したときだけロードされるため、
+  slf4j-api が無い環境（System.Logger のみ利用）では一切ロードされず、推移的依存も 0
+- モジュールパス / クラスパス × slf4j-api 有り / 無しの4通りで動作確認済み
+- `internal` パッケージは export しない（同一モジュール内でのみ使用）
+- ライセンス: Apache License 2.0
+- `System.LoggerFinder` を提供するため、JDK 内部（`java.net.http` 等）の System.Logger 出力も集約される
+
+（当初は core / slf4j / parent の3成果物に分けていたが、利用者の記述を1つにするため 1.0.0 リリース前に統合した）
 
 ### 3.2 処理フロー
 
@@ -117,9 +127,9 @@ tamacat-logging/
   `System.out` を経由しないため、アプリが `System.setOut()` でロガーへリダイレクトしても無限再帰にならない
 - 1イベント分のバイト列を組み立ててから、ロック内で1回の `write` + `flush`（行の混線を防ぐ）
 
-### 3.3 主要クラス（core）
+### 3.3 主要クラス
 
-公開 API は `org.tamacat.logging` と `org.tamacat.logging.access` のみ。`internal` は SLF4J モジュールにだけ qualified export する。
+公開 API は `org.tamacat.logging` と `org.tamacat.logging.access` のみ。
 
 | パッケージ | クラス | 役割 |
 |---|---|---|
@@ -225,7 +235,7 @@ ecs-logging（Elastic 公式仕様）と同じ**ドット区切りフラット�
 
 ### 4.3 アクセスログ
 
-Web サーバーがリクエスト完了時に呼び出す専用 API。SLF4J 非依存（core のみで利用可）。
+Web サーバーがリクエスト完了時に呼び出す専用 API。SLF4J 非依存（slf4j-api 無しで利用可）。
 
 ```java
 AccessLogger.get().log(new AccessLogEntry(
@@ -331,7 +341,7 @@ limit.message.maxLength=8192
 
 ## 7. サプライチェーン・品質保証
 
-- ランタイム依存: core = 0、slf4j = `slf4j-api` のみ
+- ランタイム依存: 0（`slf4j-api` は optional）
 - Maven Enforcer `bannedDependencies` で compile/runtime 依存の追加をビルド失敗にする
 - CycloneDX SBOM 生成、OSV-Scanner / OWASP Dependency-Check、SpotBugs + FindSecBugs
 - テスト重点:

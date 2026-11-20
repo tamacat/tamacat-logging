@@ -6,7 +6,7 @@ Java 25 向けの、セキュリティ最優先・依存最小のロギング実
 - SLF4J 2.x プロバイダ / `java.lang.System.Logger` バックエンド
 - テキスト形式（限定パターン）と ECS 互換 JSON Lines
 - アクセスログ API（Common / Combined / ECS JSON）
-- ランタイム依存: core = **0**、slf4j モジュール = `slf4j-api` のみ
+- jar は1つだけ。ランタイム依存は **0**（`slf4j-api` は optional。SLF4J を使うアプリだけが持っていれば動く）
 - Lookup・式評価・XML 設定・JNDI・ネットワーク/ファイル出力・シリアライズ・プラグイン機構を**持ちません**
 - 改行・制御文字・ANSI エスケープ・双方向制御文字は必ずエスケープされます（ログインジェクション対策）
 
@@ -14,8 +14,7 @@ Java 25 向けの、セキュリティ最優先・依存最小のロギング実
 
 ## 使い方
 
-tamacat の Maven リポジトリ（tamacat-httpd と同じ）で公開しています。Maven Central には未公開です。
-jar は [GitHub Releases](https://github.com/tamacat/tamacat-logging/releases) からも入手できます。
+tamacat の Maven リポジトリ（tamacat-httpd と同じ）で公開します（1.0.0 は未リリース）。Maven Central には公開しません。
 
 ```xml
 <repositories>
@@ -24,17 +23,21 @@ jar は [GitHub Releases](https://github.com/tamacat/tamacat-logging/releases) �
     <url>https://raw.github.com/tamacat/tamacat.github.io/mvn-repo/</url>
   </repository>
 </repositories>
+
+<dependencies>
+  <dependency>
+    <groupId>org.tamacat</groupId>
+    <artifactId>tamacat-logging</artifactId>
+    <version>1.0.0</version>
+  </dependency>
+</dependencies>
 ```
+
+SLF4J でも System.Logger でも、依存の記述はこの1つだけです。
 
 ### SLF4J で使う
 
-```xml
-<dependency>
-  <groupId>org.tamacat</groupId>
-  <artifactId>tamacat-logging-slf4j</artifactId>
-  <version>1.0.0</version>
-</dependency>
-```
+アプリ側に `slf4j-api`（2.x）があれば、自動的にプロバイダとして登録されます。
 
 ```java
 Logger log = LoggerFactory.getLogger(MyServer.class);
@@ -44,15 +47,9 @@ log.atWarn().addKeyValue("status", 503).log("upstream unavailable");
 MDC.clear(); // リクエスト終了時に必ずクリア
 ```
 
-### System.Logger だけで使う（依存ゼロ）
+### System.Logger で使う（依存ゼロ）
 
-```xml
-<dependency>
-  <groupId>org.tamacat</groupId>
-  <artifactId>tamacat-logging-core</artifactId>
-  <version>1.0.0</version>
-</dependency>
-```
+`slf4j-api` は不要です。
 
 ```java
 System.Logger log = System.getLogger("org.example.App");
@@ -149,12 +146,12 @@ Maven Wrapper（Maven 3.10.1、SHA-256 検証付き）を同梱しています�
 
 ## リリース手順
 
-1. POM のバージョンをリリース版（例: `1.0.1`）にしてコミットし、`main` に push する
-2. `v1.0.1` タグを push すると [release.yml](.github/workflows/release.yml) が動く
+1. POM のバージョンをリリース版（例: `1.0.0`）にしてコミットし、`main` に push する
+2. `v1.0.0` タグを push すると [release.yml](.github/workflows/release.yml) が動く
    - ビルド・テスト（失敗・スキップ 0 件）を通過した成果物だけを
      `tamacat/tamacat.github.io` の `mvn-repo` ブランチと GitHub Releases に公開する
    - `mvn-repo` への公開は、環境 `release` のレビュー承認後に実行される
-3. POM を次の開発版（例: `1.0.2-SNAPSHOT`）に戻す
+3. POM を次の開発版（例: `1.0.1-SNAPSHOT`）に戻す
 
 ## ライセンス
 
