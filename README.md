@@ -14,13 +14,15 @@ Java 25 向けの、セキュリティ最優先・依存最小のロギング実
 
 ## 使い方
 
+> Maven Central には未公開です。[GitHub Releases](https://github.com/tamacat/tamacat-logging/releases) の jar を使うか、`mvn install` でローカルリポジトリに登録してください。
+
 ### SLF4J で使う
 
 ```xml
 <dependency>
   <groupId>org.tamacat</groupId>
   <artifactId>tamacat-logging-slf4j</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
+  <version>1.0.0</version>
 </dependency>
 ```
 
@@ -38,7 +40,7 @@ MDC.clear(); // リクエスト終了時に必ずクリア
 <dependency>
   <groupId>org.tamacat</groupId>
   <artifactId>tamacat-logging-core</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
+  <version>1.0.0</version>
 </dependency>
 ```
 
