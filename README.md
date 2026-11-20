@@ -14,7 +14,17 @@ Java 25 向けの、セキュリティ最優先・依存最小のロギング実
 
 ## 使い方
 
-> Maven Central には未公開です。[GitHub Releases](https://github.com/tamacat/tamacat-logging/releases) の jar を使うか、`mvn install` でローカルリポジトリに登録してください。
+tamacat の Maven リポジトリ（tamacat-httpd と同じ）で公開しています。Maven Central には未公開です。
+jar は [GitHub Releases](https://github.com/tamacat/tamacat-logging/releases) からも入手できます。
+
+```xml
+<repositories>
+  <repository>
+    <id>tamacat.org</id>
+    <url>https://raw.github.com/tamacat/tamacat.github.io/mvn-repo/</url>
+  </repository>
+</repositories>
+```
 
 ### SLF4J で使う
 
@@ -125,15 +135,26 @@ json:
 
 ## ビルド
 
+Maven Wrapper（Maven 3.10.1、SHA-256 検証付き）を同梱しています。
+
 ```bash
-mvn install
+./mvnw install
 ```
 
 ```bash
-mvn -Psbom package
+./mvnw -Psbom package
 ```
 
 `-Psbom` で CycloneDX SBOM（`target/bom.json`）を生成します。
+
+## リリース手順
+
+1. POM のバージョンをリリース版（例: `1.0.1`）にしてコミットし、`main` に push する
+2. `v1.0.1` タグを push すると [release.yml](.github/workflows/release.yml) が動く
+   - ビルド・テスト（失敗・スキップ 0 件）を通過した成果物だけを
+     `tamacat/tamacat.github.io` の `mvn-repo` ブランチと GitHub Releases に公開する
+   - `mvn-repo` への公開は、環境 `release` のレビュー承認後に実行される
+3. POM を次の開発版（例: `1.0.2-SNAPSHOT`）に戻す
 
 ## ライセンス
 

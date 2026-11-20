@@ -6,7 +6,7 @@
 
   <groupId>org.tamacat</groupId>
   <artifactId>tamacat-logging-parent</artifactId>
-  <version>1.0.0</version>
+  <version>1.0.1-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>tamacat-logging</name>
@@ -24,7 +24,7 @@
     <url>https://github.com/tamacat/tamacat-logging</url>
     <connection>scm:git:https://github.com/tamacat/tamacat-logging.git</connection>
     <developerConnection>scm:git:https://github.com/tamacat/tamacat-logging.git</developerConnection>
-    <tag>v1.0.0</tag>
+    <tag>HEAD</tag>
   </scm>
 
   <issueManagement>
@@ -109,6 +109,16 @@
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-source-plugin</artifactId>
+          <version>3.4.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-deploy-plugin</artifactId>
+          <version>3.2.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-enforcer-plugin</artifactId>
           <version>3.7.0</version>
         </plugin>
@@ -121,6 +131,19 @@
     </pluginManagement>
 
     <plugins>
+      <!-- -sources.jar for the mvn-repo distribution -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals>
+              <goal>jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
       <!-- Supply-chain guard: only slf4j-api (and our own modules) may appear outside test scope. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
